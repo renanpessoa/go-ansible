@@ -2,10 +2,13 @@ package ansibler
 
 import (
 	"bytes"
-	"errors"
+	goerrors "errors"
 	"os"
+	execerrors "os/exec"
 	"testing"
 
+	"github.com/apenella/go-ansible/stdoutcallback"
+	errors "github.com/apenella/go-common-utils/error"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,15 +34,18 @@ func TestGenerateCommandConnectionOptions(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Log(test.desc)
 
-		options, err := test.ansiblePlaybookConnectionOptions.GenerateCommandConnectionOptions()
+		t.Run(test.desc, func(t *testing.T) {
+			t.Log(test.desc)
 
-		if err != nil && assert.Error(t, err) {
-			assert.Equal(t, test.err, err)
-		} else {
-			assert.Equal(t, options, test.options, "Unexpected options value")
-		}
+			options, err := test.ansiblePlaybookConnectionOptions.GenerateCommandConnectionOptions()
+
+			if err != nil && assert.Error(t, err) {
+				assert.Equal(t, test.err, err)
+			} else {
+				assert.Equal(t, options, test.options, "Unexpected options value")
+			}
+		})
 	}
 
 }
@@ -55,7 +61,7 @@ func TestGenerateCommandOptions(t *testing.T) {
 		{
 			desc:                   "Testing nil AnsiblePlaybookOptions definition",
 			ansiblePlaybookOptions: nil,
-			err:                    errors.New("(ansible::GenerateCommandOptions) AnsiblePlaybookOptions is nil"),
+			err:                    errors.New("(ansible::GenerateCommandOptions)", "AnsiblePlaybookOptions is nil"),
 			options:                nil,
 		},
 		{
@@ -98,15 +104,18 @@ func TestGenerateCommandOptions(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Log(test.desc)
 
-		options, err := test.ansiblePlaybookOptions.GenerateCommandOptions()
+		t.Run(test.desc, func(t *testing.T) {
+			t.Log(test.desc)
 
-		if err != nil && assert.Error(t, err) {
-			assert.Equal(t, test.err, err)
-		} else {
-			assert.Equal(t, options, test.options, "Unexpected options value")
-		}
+			options, err := test.ansiblePlaybookOptions.GenerateCommandOptions()
+
+			if err != nil && assert.Error(t, err) {
+				assert.Equal(t, test.err, err)
+			} else {
+				assert.Equal(t, options, test.options, "Unexpected options value")
+			}
+		})
 	}
 }
 
@@ -173,15 +182,17 @@ func TestGenerateExtraVarsCommand(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Log(test.desc)
+		t.Run(test.desc, func(t *testing.T) {
+			t.Log(test.desc)
 
-		extravars, err := test.ansiblePlaybookOptions.generateExtraVarsCommand()
+			extravars, err := test.ansiblePlaybookOptions.generateExtraVarsCommand()
 
-		if err != nil && assert.Error(t, err) {
-			assert.Equal(t, test.err, err)
-		} else {
-			assert.Equal(t, extravars, test.extravars, "Unexpected options value")
-		}
+			if err != nil && assert.Error(t, err) {
+				assert.Equal(t, test.err, err)
+			} else {
+				assert.Equal(t, extravars, test.extravars, "Unexpected options value")
+			}
+		})
 	}
 }
 
@@ -228,7 +239,7 @@ func TestAddExtraVar(t *testing.T) {
 					"extra": "var",
 				},
 			},
-			err:           errors.New("(ansible::AddExtraVar) ExtraVar 'extra' already exist"),
+			err:           errors.New("(ansible::AddExtraVar)", "ExtraVar 'extra' already exist"),
 			extraVarName:  "extra",
 			extraVarValue: "var",
 			res:           nil,
@@ -236,15 +247,18 @@ func TestAddExtraVar(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Log(test.desc)
 
-		err := test.ansiblePlaybookOptions.AddExtraVar(test.extraVarName, test.extraVarValue)
+		t.Run(test.desc, func(t *testing.T) {
+			t.Log(test.desc)
 
-		if err != nil && assert.Error(t, err) {
-			assert.Equal(t, test.err, err)
-		} else {
-			assert.Equal(t, test.res, test.ansiblePlaybookOptions.ExtraVars, "Unexpected options value")
-		}
+			err := test.ansiblePlaybookOptions.AddExtraVar(test.extraVarName, test.extraVarValue)
+
+			if err != nil && assert.Error(t, err) {
+				assert.Equal(t, test.err, err)
+			} else {
+				assert.Equal(t, test.res, test.ansiblePlaybookOptions.ExtraVars, "Unexpected options value")
+			}
+		})
 	}
 
 }
@@ -263,27 +277,97 @@ func TestCommand(t *testing.T) {
 			ansiblePlaybookCmd: &AnsiblePlaybookCmd{
 				Playbook: "test/ansible/site.yml",
 				ConnectionOptions: &AnsiblePlaybookConnectionOptions{
+					AskPass:    true,
 					Connection: "local",
+					PrivateKey: "pk",
+					Timeout:    "10",
+					User:       "apenella",
 				},
 				Options: &AnsiblePlaybookOptions{
-					Inventory: "test/ansible/inventory/all",
+					Inventory:  "test/ansible/inventory/all",
+					Limit:      "myhost",
+					FlushCache: true,
+					ExtraVars: map[string]interface{}{
+						"var1": "value1",
+					},
+					Tags: "tag1",
+				},
+				PrivilegeEscalationOptions: &AnsiblePlaybookPrivilegeEscalationOptions{
+					Become:        true,
+					BecomeMethod:  "sudo",
+					BecomeUser:    "apenella",
+					AskBecomePass: true,
 				},
 			},
-			command: []string{"ansible-playbook", "--inventory", "test/ansible/inventory/all", "--connection", "local", "test/ansible/site.yml"},
+			command: []string{"ansible-playbook", "--flush-cache", "--inventory", "test/ansible/inventory/all", "--limit", "myhost", "--tags", "tag1", "--extra-vars", "{\"var1\":\"value1\"}", "--ask-pass", "--connection", "local", "--private-key", "pk", "--user", "apenella", "--timeout", "10", "--ask-become-pass", "--become", "--become-method", "sudo", "--become-user", "apenella", "test/ansible/site.yml"},
 		},
 	}
 
 	for _, test := range tests {
-		t.Log(test.desc)
 
-		command, err := test.ansiblePlaybookCmd.Command()
+		t.Run(test.desc, func(t *testing.T) {
+			t.Log(test.desc)
 
-		if err != nil && assert.Error(t, err) {
-			assert.Equal(t, test.err, err)
-		} else {
-			assert.Equal(t, command, test.command, "Unexpected value")
-		}
+			command, err := test.ansiblePlaybookCmd.Command()
+
+			if err != nil && assert.Error(t, err) {
+				assert.Equal(t, test.err, err)
+			} else {
+				assert.Equal(t, test.command, command, "Unexpected value")
+			}
+		})
 	}
+}
+
+func TestAnsiblePlaybookCmdString(t *testing.T) {
+	tests := []struct {
+		desc               string
+		err                error
+		ansiblePlaybookCmd *AnsiblePlaybookCmd
+		res                string
+	}{
+		{
+			desc: "Testing AnsiblePlaybookCmd to string",
+			err:  nil,
+			ansiblePlaybookCmd: &AnsiblePlaybookCmd{
+				Playbook: "test/ansible/site.yml",
+				ConnectionOptions: &AnsiblePlaybookConnectionOptions{
+					AskPass:    true,
+					Connection: "local",
+					PrivateKey: "pk",
+					Timeout:    "10",
+					User:       "apenella",
+				},
+				Options: &AnsiblePlaybookOptions{
+					Inventory:  "test/ansible/inventory/all",
+					Limit:      "myhost",
+					FlushCache: true,
+					ExtraVars: map[string]interface{}{
+						"var1": "value1",
+					},
+					Tags: "tag1",
+				},
+				PrivilegeEscalationOptions: &AnsiblePlaybookPrivilegeEscalationOptions{
+					Become:        true,
+					BecomeMethod:  "sudo",
+					BecomeUser:    "apenella",
+					AskBecomePass: true,
+				},
+			},
+			res: "ansible-playbook  --flush-cache --inventory test/ansible/inventory/all --limit myhost --tags tag1 --extra-vars '{\"var1\":\"value1\"}'  --ask-pass --connection local --private-key pk --user apenella --timeout 10  --ask-become-pass --become --become-method sudo --become-user apenella test/ansible/site.yml",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			t.Log(test.desc)
+
+			res := test.ansiblePlaybookCmd.String()
+
+			assert.Equal(t, test.res, res, "Unexpected value")
+		})
+	}
+
 }
 
 func TestAnsibleForceColor(t *testing.T) {
@@ -306,10 +390,18 @@ func TestRun(t *testing.T) {
 			desc:               "Run nil ansiblePlaybookCmd",
 			ansiblePlaybookCmd: nil,
 			res:                "",
-			err:                errors.New("(ansible:Run) AnsiblePlaybookCmd is nil"),
+			err:                errors.New("(ansible:Run)", "AnsiblePlaybookCmd is nil"),
 		},
 		{
-			desc: "Run a ansiblePlaybookCmd",
+			desc: "Testing run a ansiblePlaybookCmd with unexisting binary file",
+			ansiblePlaybookCmd: &AnsiblePlaybookCmd{
+				Binary: "unexisting",
+			},
+			res: "",
+			err: errors.New("(ansible:Run)", "Binary file 'unexisting' does not exists", &execerrors.Error{Name: "unexisting", Err: goerrors.New("executable file not found in $PATH")}),
+		},
+		{
+			desc: "Testing run a ansiblePlaybookCmd",
 			ansiblePlaybookCmd: &AnsiblePlaybookCmd{
 				Exec: &MockExecute{
 					Write: &w,
@@ -326,7 +418,7 @@ func TestRun(t *testing.T) {
 			err: nil,
 		},
 		{
-			desc: "Run a ansiblePlaybookCmd without executor",
+			desc: "Testing run a ansiblePlaybookCmd without executor",
 			ansiblePlaybookCmd: &AnsiblePlaybookCmd{
 				Exec:     nil,
 				Playbook: "test/test_site.yml",
@@ -340,18 +432,63 @@ func TestRun(t *testing.T) {
 			res: "",
 			err: nil,
 		},
+		{
+			desc: "Testing run a ansiblePlaybookCmd with JSON stdout callback",
+			ansiblePlaybookCmd: &AnsiblePlaybookCmd{
+				StdoutCallback: stdoutcallback.JSONStdoutCallback,
+				Playbook:       "test/test_site.yml",
+				ConnectionOptions: &AnsiblePlaybookConnectionOptions{
+					Connection: "local",
+				},
+				Options: &AnsiblePlaybookOptions{
+					Inventory: "test/all",
+				},
+			},
+			res: "",
+			err: nil,
+		},
+		{
+			desc: "Testing run a ansiblePlaybookCmd with multiple extravars",
+			ansiblePlaybookCmd: &AnsiblePlaybookCmd{
+				Exec: &MockExecute{
+					Write: &w,
+				},
+				Playbook: "test/test_site.yml",
+				ConnectionOptions: &AnsiblePlaybookConnectionOptions{
+					Connection: "local",
+				},
+				Options: &AnsiblePlaybookOptions{
+					Inventory: "test/all",
+					ExtraVars: map[string]interface{}{
+						"string": "testing an string",
+						"bool":   true,
+						"int":    10,
+						"array":  []string{"one", "two"},
+						"dict": map[string]bool{
+							"one": true,
+							"two": false,
+						},
+					},
+				},
+			},
+			res: "ansible-playbook [--inventory test/all --extra-vars {\"array\":[\"one\",\"two\"],\"bool\":true,\"dict\":{\"one\":true,\"two\":false},\"int\":10,\"string\":\"testing an string\"} --connection local test/test_site.yml]",
+			err: nil,
+		},
 	}
 
 	for _, test := range tests {
 		w = bytes.Buffer{}
 
-		t.Log(test.desc)
+		t.Run(test.desc, func(t *testing.T) {
+			t.Log(test.desc)
+			w.Reset()
 
-		err := test.ansiblePlaybookCmd.Run()
-		if err != nil && assert.Error(t, err) {
-			assert.Equal(t, test.err, err)
-		} else {
-			assert.Equal(t, test.res, w.String(), "Unexpected value")
-		}
+			err := test.ansiblePlaybookCmd.Run()
+			if err != nil && assert.Error(t, err) {
+				assert.Equal(t, test.err, err)
+			} else {
+				assert.Equal(t, test.res, w.String(), "Unexpected value")
+			}
+		})
 	}
 }

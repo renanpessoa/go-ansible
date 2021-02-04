@@ -1,17 +1,18 @@
 package ansibler
 
 import (
-	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 
+	"github.com/apenella/go-ansible/execute"
+	"github.com/apenella/go-ansible/stdoutcallback"
 	common "github.com/apenella/go-common-utils/data"
+	errors "github.com/apenella/go-common-utils/error"
 )
 
 const (
-	// AnsiblePlaybookBin is the ansible-playbook binary file value
-	AnsiblePlaybookBin = "ansible-playbook"
-
 	// AskBecomePassFlag is ansble-playbook's ask for become user password flag
 	AskBecomePassFlag = "--ask-become-pass"
 
@@ -29,6 +30,9 @@ const (
 
 	// ConnectionFlag is the connection flag for ansible-playbook
 	ConnectionFlag = "--connection"
+
+	// DefaultAnsiblePlaybookBinary is the ansible-playbook binary file default value
+	DefaultAnsiblePlaybookBinary = "ansible-playbook"
 
 	// ExtraVarsFlag is the extra variables flag for ansible-playbook
 	ExtraVarsFlag = "--extra-vars"
@@ -52,7 +56,7 @@ const (
 	ListTasksFlag = "--list-tasks"
 
 	// PrivateKeyFlag is the private key file flag for ansible-playbook
-	PrivateKeyFlag = "--private-key "
+	PrivateKeyFlag = "--private-key"
 
 	// TagsFlag is the tags flag for ansible-playbook
 	TagsFlag = "--tags"
@@ -69,8 +73,13 @@ const (
 	// VaultPasswordFileFlag is the vault password file flag for ansible-playbook
 	VaultPasswordFileFlag = "--vault-password-file"
 
+	// ansible configuration consts
+
 	// AnsibleForceColorEnv is the environment variable which forces color mode
 	AnsibleForceColorEnv = "ANSIBLE_FORCE_COLOR"
+
+	// AnsibleHostKeyCheckingEnv
+	AnsibleHostKeyCheckingEnv = "ANSIBLE_HOST_KEY_CHECKING"
 )
 
 // Executor is and interface that should be implemented for those item which could run ansible playbooks
@@ -78,13 +87,25 @@ type Executor interface {
 	Execute(command string, args []string, prefix string) error
 }
 
-// AnsibleForceColor change to a forced color mode
+// AnsibleForceColor changes to a forced color mode
 func AnsibleForceColor() {
 	os.Setenv(AnsibleForceColorEnv, "true")
 }
 
+// AnsibleAvoidHostKeyChecking sets the hosts key checking to false
+func AnsibleAvoidHostKeyChecking() {
+	os.Setenv(AnsibleHostKeyCheckingEnv, "false")
+}
+
+// AnsibleSetEnv set any configuration by environment variables. Check ansible configuration at https://docs.ansible.com/ansible/latest/reference_appendices/config.html
+func AnsibleSetEnv(key, value string) {
+	os.Setenv(key, value)
+}
+
 // AnsiblePlaybookCmd object is the main object which defines the `ansible-playbook` command and how to execute it.
 type AnsiblePlaybookCmd struct {
+	// Ansible binary file
+	Binary string
 	// Exec is the executor item
 	Exec Executor
 	// ExecPrefix is a text that is set at the beginning of each execution line
@@ -97,33 +118,52 @@ type AnsiblePlaybookCmd struct {
 	ConnectionOptions *AnsiblePlaybookConnectionOptions
 	// PrivilegeEscalationOptions are the ansible's playbook privilage escalation options
 	PrivilegeEscalationOptions *AnsiblePlaybookPrivilegeEscalationOptions
+	// StdoutCallback defines which is the stdout callback method. By default is used 'default' method. Supported stdout method by go-ansible are: debug, default, dense, json, minimal, null, oneline, stderr, timer, yaml
+	StdoutCallback string
 	// Writer manages the output
 	Writer io.Writer
 }
 
 // Run method runs the ansible-playbook
 func (p *AnsiblePlaybookCmd) Run() error {
+	var err error
+	var cmd []string
+
 	if p == nil {
-		return errors.New("(ansible:Run) AnsiblePlaybookCmd is nil")
+		return errors.New("(ansible:Run)", "AnsiblePlaybookCmd is nil")
+	}
+
+	// Use default binary when it is not already defined
+	if p.Binary == "" {
+		p.Binary = DefaultAnsiblePlaybookBinary
+	}
+
+	_, err = exec.LookPath(p.Binary)
+	if err != nil {
+		return errors.New("(ansible:Run)", fmt.Sprintf("Binary file '%s' does not exists", p.Binary), err)
 	}
 
 	// Define a default executor when it is not defined on AnsiblePlaybookCmd
 	if p.Exec == nil {
-		p.Exec = &DefaultExecute{
-			Write: p.Writer,
+		p.Exec = &execute.DefaultExecute{
+			Write:       p.Writer,
+			ResultsFunc: stdoutcallback.GetResultsFunc(p.StdoutCallback),
 		}
 	}
 
 	// Generate the command to be run
-	cmd, err := p.Command()
+	cmd, err = p.Command()
 	if err != nil {
-		return errors.New("(ansible:Run) -> " + err.Error())
+		return errors.New("(ansible:Run)", fmt.Sprintf("Error running '%s'", p.String()), err)
 	}
 
 	// Set default prefix
 	if len(p.ExecPrefix) <= 0 {
 		p.ExecPrefix = ""
 	}
+
+	// Configure StdoutCallback method. By default is used ansible's 'default' callback method
+	stdoutcallback.AnsibleStdoutCallbackSetEnv(p.StdoutCallback)
 
 	// Execute the command an return
 	return p.Exec.Execute(cmd[0], cmd[1:], p.ExecPrefix)
@@ -132,14 +172,20 @@ func (p *AnsiblePlaybookCmd) Run() error {
 // Command generate the ansible-playbook command which will be executed
 func (p *AnsiblePlaybookCmd) Command() ([]string, error) {
 	cmd := []string{}
+
+	// Use default binary when it is not already defined
+	if p.Binary == "" {
+		p.Binary = DefaultAnsiblePlaybookBinary
+	}
+
 	// Set the ansible-playbook binary file
-	cmd = append(cmd, AnsiblePlaybookBin)
+	cmd = append(cmd, p.Binary)
 
 	// Determine the options to be set
 	if p.Options != nil {
 		options, err := p.Options.GenerateCommandOptions()
 		if err != nil {
-			return nil, errors.New("(ansible::Command) -> " + err.Error())
+			return nil, errors.New("(ansible::Command)", "Error creating options", err)
 		}
 		for _, option := range options {
 			cmd = append(cmd, option)
@@ -150,7 +196,7 @@ func (p *AnsiblePlaybookCmd) Command() ([]string, error) {
 	if p.ConnectionOptions != nil {
 		options, err := p.ConnectionOptions.GenerateCommandConnectionOptions()
 		if err != nil {
-			return nil, errors.New("(ansible::Command) -> " + err.Error())
+			return nil, errors.New("(ansible::Command)", "Error creating connection options", err)
 		}
 		for _, option := range options {
 			cmd = append(cmd, option)
@@ -161,7 +207,7 @@ func (p *AnsiblePlaybookCmd) Command() ([]string, error) {
 	if p.PrivilegeEscalationOptions != nil {
 		options, err := p.PrivilegeEscalationOptions.GenerateCommandPrivilegeEscalationOptions()
 		if err != nil {
-			return nil, errors.New("(ansible::Command) -> " + err.Error())
+			return nil, errors.New("(ansible::Command)", "Error creating privilege escalation options", err)
 		}
 		for _, option := range options {
 			cmd = append(cmd, option)
@@ -172,6 +218,31 @@ func (p *AnsiblePlaybookCmd) Command() ([]string, error) {
 	cmd = append(cmd, p.Playbook)
 
 	return cmd, nil
+}
+
+// String returns AnsiblePlaybookCmd as string
+func (p *AnsiblePlaybookCmd) String() string {
+
+	// Use default binary when it is not already defined
+	if p.Binary == "" {
+		p.Binary = DefaultAnsiblePlaybookBinary
+	}
+
+	str := p.Binary
+
+	if p.Options != nil {
+		str = fmt.Sprintf("%s %s", str, p.Options.String())
+	}
+	if p.ConnectionOptions != nil {
+		str = fmt.Sprintf("%s %s", str, p.ConnectionOptions.String())
+	}
+	if p.PrivilegeEscalationOptions != nil {
+		str = fmt.Sprintf("%s %s", str, p.PrivilegeEscalationOptions.String())
+	}
+
+	str = fmt.Sprintf("%s %s", str, p.Playbook)
+
+	return str
 }
 
 // AnsiblePlaybookOptions object has those parameters described on `Options` section within ansible-playbook's man page, and which defines which should be the ansible-playbook execution behavior.
@@ -192,6 +263,8 @@ type AnsiblePlaybookOptions struct {
 	ListTasks bool
 	// Tags list all tasks that would be executed
 	Tags string
+	// VaultPasswordFile path to the file holding vault decryption key
+	VaultPasswordFile string
 }
 
 // GenerateCommandOptions return a list of options flags to be used on ansible-playbook execution
@@ -199,7 +272,7 @@ func (o *AnsiblePlaybookOptions) GenerateCommandOptions() ([]string, error) {
 	cmd := []string{}
 
 	if o == nil {
-		return nil, errors.New("(ansible::GenerateCommandOptions) AnsiblePlaybookOptions is nil")
+		return nil, errors.New("(ansible::GenerateCommandOptions)", "AnsiblePlaybookOptions is nil")
 	}
 
 	if o.FlushCache {
@@ -233,11 +306,16 @@ func (o *AnsiblePlaybookOptions) GenerateCommandOptions() ([]string, error) {
 		cmd = append(cmd, o.Tags)
 	}
 
+	if o.VaultPasswordFile != "" {
+		cmd = append(cmd, VaultPasswordFileFlag)
+		cmd = append(cmd, o.VaultPasswordFile)
+	}
+
 	if len(o.ExtraVars) > 0 {
 		cmd = append(cmd, ExtraVarsFlag)
 		extraVars, err := o.generateExtraVarsCommand()
 		if err != nil {
-			return nil, errors.New("(ansible::GenerateCommandOptions) -> " + err.Error())
+			return nil, errors.New("(ansible::GenerateCommandOptions)", "Error generating extra-vars", err)
 		}
 		cmd = append(cmd, extraVars)
 	}
@@ -250,7 +328,7 @@ func (o *AnsiblePlaybookOptions) generateExtraVarsCommand() (string, error) {
 
 	extraVars, err := common.ObjectToJSONString(o.ExtraVars)
 	if err != nil {
-		return "", errors.New("(ansible::generateExtraVarsCommand) -> " + err.Error())
+		return "", errors.New("(ansible::generateExtraVarsCommand)", "Error creationg extra-vars JSON object to string", err)
 	}
 	return extraVars, nil
 }
@@ -263,12 +341,52 @@ func (o *AnsiblePlaybookOptions) AddExtraVar(name string, value interface{}) err
 	}
 	_, exists := o.ExtraVars[name]
 	if exists {
-		return errors.New("(ansible::AddExtraVar) ExtraVar '" + name + "' already exist")
+		return errors.New("(ansible::AddExtraVar)", fmt.Sprintf("ExtraVar '%s' already exist", name))
 	}
 
 	o.ExtraVars[name] = value
 
 	return nil
+}
+
+// String returns AnsiblePlaybookOptions as string
+func (o *AnsiblePlaybookOptions) String() string {
+	str := ""
+
+	if o.FlushCache {
+		str = fmt.Sprintf("%s %s", str, FlushCacheFlag)
+	}
+
+	if o.Inventory != "" {
+		str = fmt.Sprintf("%s %s %s", str, InventoryFlag, o.Inventory)
+	}
+
+	if o.Limit != "" {
+		str = fmt.Sprintf("%s %s %s", str, LimitFlag, o.Limit)
+	}
+
+	if o.ListHosts {
+		str = fmt.Sprintf("%s %s", str, ListHostsFlag)
+	}
+
+	if o.ListTags {
+		str = fmt.Sprintf("%s %s", str, ListTagsFlag)
+	}
+
+	if o.ListTasks {
+		str = fmt.Sprintf("%s %s", str, ListTasksFlag)
+	}
+
+	if o.Tags != "" {
+		str = fmt.Sprintf("%s %s %s", str, TagsFlag, o.Tags)
+	}
+
+	if len(o.ExtraVars) > 0 {
+		extraVars, _ := o.generateExtraVarsCommand()
+		str = fmt.Sprintf("%s %s %s", str, ExtraVarsFlag, fmt.Sprintf("'%s'", extraVars))
+	}
+
+	return str
 }
 
 // AnsiblePlaybookConnectionOptions object has those parameters described on `Connections Options` section within ansible-playbook's man page, and which defines how to connect to hosts.
@@ -314,6 +432,33 @@ func (o *AnsiblePlaybookConnectionOptions) GenerateCommandConnectionOptions() ([
 	}
 
 	return cmd, nil
+}
+
+// String return a list of connection options flags to be used on ansible-playbook execution
+func (o *AnsiblePlaybookConnectionOptions) String() string {
+	str := ""
+
+	if o.AskPass {
+		str = fmt.Sprintf("%s %s", str, AskPassFlag)
+	}
+
+	if o.Connection != "" {
+		str = fmt.Sprintf("%s %s %s", str, ConnectionFlag, o.Connection)
+	}
+
+	if o.PrivateKey != "" {
+		str = fmt.Sprintf("%s %s %s", str, PrivateKeyFlag, o.PrivateKey)
+	}
+
+	if o.User != "" {
+		str = fmt.Sprintf("%s %s %s", str, UserFlag, o.User)
+	}
+
+	if o.Timeout != "" {
+		str = fmt.Sprintf("%s %s %s", str, TimeoutFlag, o.Timeout)
+	}
+
+	return str
 }
 
 /* become methods
@@ -366,4 +511,27 @@ func (o *AnsiblePlaybookPrivilegeEscalationOptions) GenerateCommandPrivilegeEsca
 	}
 
 	return cmd, nil
+}
+
+// String return an string
+func (o *AnsiblePlaybookPrivilegeEscalationOptions) String() string {
+	str := ""
+
+	if o.AskBecomePass {
+		str = fmt.Sprintf("%s %s", str, AskBecomePassFlag)
+	}
+
+	if o.Become {
+		str = fmt.Sprintf("%s %s", str, BecomeFlag)
+	}
+
+	if o.BecomeMethod != "" {
+		str = fmt.Sprintf("%s %s %s", str, BecomeMethodFlag, o.BecomeMethod)
+	}
+
+	if o.BecomeUser != "" {
+		str = fmt.Sprintf("%s %s %s", str, BecomeUserFlag, o.BecomeUser)
+	}
+
+	return str
 }

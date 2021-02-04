@@ -5,12 +5,12 @@ package main
 */
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	ansibler "github.com/apenella/go-ansible"
+	errors "github.com/apenella/go-common-utils/error"
 	"github.com/spf13/cobra"
 )
 
@@ -33,23 +33,27 @@ func init() {
 var rootCmd = &cobra.Command{
 	Use:   "cobra-cmd-ansibleplaybook",
 	Short: "cobra-cmd-ansibleplaybook",
-	Long:  `cobra-cmd-ansibleplaybook is an example which show how to use go-ansible library from cobra cli`,
-	RunE:  commandHandler,
+	Long: `cobra-cmd-ansibleplaybook is an example which show how to use go-ansible library from cobra cli
+	
+ Run the example:
+go run cobra-cmd-ansibleplaybook.go -L -i 127.0.0.1, -p site.yml -e example="hello go-ansible!"
+`,
+	RunE: commandHandler,
 }
 
 func commandHandler(cmd *cobra.Command, args []string) error {
 
 	if len(playbook) < 1 {
-		return errors.New("To run ansible-playbook playbook file path must be specified")
+		return errors.New("(commandHandler)", "To run ansible-playbook playbook file path must be specified")
 	}
 
 	if len(inventory) < 1 {
-		return errors.New("To run ansible-playbook an inventory must be specified")
+		return errors.New("(commandHandler)", "To run ansible-playbook an inventory must be specified")
 	}
 
 	vars, err := varListToMap(extravars)
 	if err != nil {
-		return errors.New("Error parsing extra variables. " + err.Error())
+		return errors.New("(commandHandler)", "Error parsing extra variables", err)
 	}
 
 	ansiblePlaybookConnectionOptions := &ansibler.AnsiblePlaybookConnectionOptions{}
@@ -90,7 +94,7 @@ func varListToMap(varsList []string) (map[string]interface{}, error) {
 		tokens := strings.Split(v, extraVarsSplitToken)
 
 		if len(tokens) != 2 {
-			return nil, errors.New("Invalid extra variable format on '" + v + "'")
+			return nil, errors.New("(varListToMap)", fmt.Sprintf("Invalid extra variable format on '%s'", v))
 		}
 		vars[tokens[0]] = tokens[1]
 	}

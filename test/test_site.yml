@@ -1,9 +1,9 @@
 ---
 
 - hosts: local
+  gather_facts: false
 
   tasks:
-    - name: Print line
-      debug:
-        msg: That's a message to debug
-
+    - name: Print test message
+      ansible.builtin.debug:
+        msg: That's a message to test
